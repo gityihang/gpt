@@ -1,0 +1,49 @@
+### model
+model_name_or_path: ../../model/DeepSeek-R1-Distill-Llama-8B
+# 或者使用: deepseek-ai/DeepSeek-V2-Lite-Chat
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: q_proj,o_proj,k_proj,v_proj,gate_proj,up_proj,down_proj
+
+### dataset
+dataset: deepseek_dataset
+template: deepseek
+cutoff_len: 4096  
+max_samples: 5000  
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: ../../model/paper_reading_sft
+logging_steps: 10
+save_steps: 500
+eval_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 48
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5  # DeepSeek建议稍低的学习率
+num_train_epochs: 5.0
+max_grad_norm: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### eval
+# eval_strategy: steps
+# eval_steps: 200
+# per_device_eval_batch_size: 1
+# val_size: 0.1
+# metric_for_best_model: eval_loss
+# load_best_model_at_end: true

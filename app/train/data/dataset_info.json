@@ -1,0 +1,10 @@
+{ 
+    "deepseek_dataset": {
+        "file_name": "jsonl/train.jsonl",
+        "columns": {
+            "prompt": "instruction",
+            "query": "input",
+            "response": "output"
+        }
+      } 
+}
