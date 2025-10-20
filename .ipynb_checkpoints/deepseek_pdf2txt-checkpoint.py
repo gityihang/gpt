@@ -453,8 +453,8 @@ def batch_process_pdfs(pdf_folder: str = "pdf", txt_folder: str = "txt"):
 # --- 主程序 ---
 if __name__ == "__main__":
     # 设置文件夹路径
-    pdf_folder = "pdf"  # PDF文件所在文件夹
-    txt_folder = "txt"  # 输出文本文件文件夹
+    pdf_folder = "app/pdf"  # PDF文件所在文件夹
+    txt_folder = "app/txt"  # 输出文本文件文件夹
     
     if not os.path.exists(pdf_folder):
         print(f"PDF文件夹 '{pdf_folder}' 不存在，正在创建...")

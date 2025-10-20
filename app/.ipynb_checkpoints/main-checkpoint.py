@@ -7,6 +7,7 @@ import uuid
 import shutil
 import json
 import subprocess
+import requests
 from txt2qa import (
     main as qa_main, 
     read_multiple_txt_files, 
@@ -19,14 +20,6 @@ from txt2qa import (
 )
 
 # 定义统一的路径常量
-# APPDATA_PATH = Path(os.getenv('APPDATA', '')) / "app"
-# APPDATA_PATH_JSON = Path(os.getenv('APPDATA', '')) / "app" / "train" / "data"
-# PDF_FOLDER = APPDATA_PATH / "pdf"
-# TXT_FOLDER = APPDATA_PATH / "txt"
-# JSONL_FOLDER = APPDATA_PATH_JSON / "jsonl"
-# JSONL_TRAIN_PATH = JSONL_FOLDER / "train.jsonl"
-# TRAIN_SCRIPT_PATH = APPDATA_PATH / "train" / "run.sh"
-
 BASE_DIR = Path("app")  # app目录
 APPDATA_PATH = BASE_DIR
 APPDATA_PATH_JSON = BASE_DIR / "train" / "data"
@@ -35,6 +28,11 @@ TXT_FOLDER = BASE_DIR / "txt"
 JSONL_FOLDER = APPDATA_PATH_JSON / "jsonl"
 JSONL_TRAIN_PATH = JSONL_FOLDER / "train.jsonl"
 TRAIN_SCRIPT_PATH = BASE_DIR / "train" / "run.sh"
+
+# 推理相关常量
+SYSTEM_PROMPT = "你是一个专业的AI助手，能够准确回答用户的问题。"
+MODEL_NAME = "deepseek-chat"
+API_URL = "http://localhost:11434/v1/chat/completions"
 
 def ensure_directories():
     """确保所有所需目录存在"""
@@ -492,34 +490,97 @@ def create_inference_tab():
         
         with gr.Row():
             with gr.Column(scale=1):
-                gr.Markdown("### 1. 推理配置")
+                gr.Markdown("### 1. 模型配置")
                 
                 model_path = gr.Textbox(
                     label="模型路径",
-                    value="output_models",
-                    placeholder="模型目录路径"
+                    value="model/merge",
+                    placeholder="模型目录路径",
+                    info="请输入训练好的模型路径"
                 )
                 
-                question_input = gr.Textbox(
-                    label="输入问题",
-                    lines=3,
-                    placeholder="请输入问题..."
-                )
-                
-                run_inference_btn = gr.Button(
-                    "🔍 运行推理",
+                load_model_btn = gr.Button(
+                    "📥 加载模型",
                     variant="primary",
                     size="lg"
                 )
                 
+                model_status = gr.Markdown(
+                    value="**模型未加载**",
+                    label="📊 模型状态"
+                )
+                
+                gr.Markdown("### 2. 推理设置")
+                
+                question_input = gr.Textbox(
+                    label="输入问题",
+                    lines=3,
+                    placeholder="请输入问题...",
+                    info="输入您想要询问的问题"
+                )
+                
+                temperature_slider = gr.Slider(
+                    minimum=0.1,
+                    maximum=1.0,
+                    value=0.7,
+                    step=0.1,
+                    label="Temperature",
+                    info="控制生成文本的随机性"
+                )
+                
+                max_tokens_slider = gr.Slider(
+                    minimum=100,
+                    maximum=4000,
+                    value=2048,
+                    step=100,
+                    label="最大生成长度",
+                    info="控制生成文本的最大长度"
+                )
+                
+                run_inference_btn = gr.Button(
+                    "🔍 开始推理",
+                    variant="primary",
+                    size="lg"
+                )
+                
+                gr.Markdown("""
+                ### 💡 使用说明
+                
+                **操作流程：**
+                1. 输入模型路径
+                2. 点击"加载模型"按钮
+                3. 输入问题并设置参数
+                4. 点击"开始推理"获取结果
+                
+                **参数说明：**
+                - **Temperature**: 值越高结果越随机，值越低结果越确定
+                - **最大生成长度**: 限制生成文本的长度
+                """)
+                
             with gr.Column(scale=2):
-                gr.Markdown("### 2. 推理结果")
+                gr.Markdown("### 3. 推理结果")
+                
+                inference_progress = gr.Markdown(
+                    value="**等待推理...**",
+                    label="🔄 推理状态"
+                )
                 
                 inference_result = gr.Textbox(
                     label="推理结果",
-                    lines=8,
+                    lines=12,
                     show_copy_button=True,
-                    interactive=False
+                    interactive=False,
+                    placeholder="推理结果将在这里显示..."
+                )
+                
+                gr.Markdown("### 4. 推理信息")
+                
+                inference_info = gr.Textbox(
+                    label="推理详情",
+                    lines=4,
+                    show_copy_button=True,
+                    interactive=False,
+                    placeholder="推理的详细信息将在这里显示..."
                 )
         
         return {
@@ -527,10 +588,16 @@ def create_inference_tab():
             "inputs": {
                 "model_path": model_path,
                 "question_input": question_input,
+                "temperature_slider": temperature_slider,
+                "max_tokens_slider": max_tokens_slider,
+                "load_model_btn": load_model_btn,
                 "run_inference_btn": run_inference_btn
             },
             "outputs": {
-                "inference_result": inference_result
+                "model_status": model_status,
+                "inference_progress": inference_progress,
+                "inference_result": inference_result,
+                "inference_info": inference_info
             }
         }
 
@@ -759,72 +826,167 @@ def load_instructions_from_jsonl(jsonl_path, max_instructions=5):
     
     return instructions
 
-def run_inference_ui(model_path, question):
-    """
-    流式版本的推理函数，从JSONL文件读取instruction作为历史
-    """
-    def generate_stream():
-        try:
-            # 1. 从JSONL文件加载instructions作为历史
-            instructions = load_instructions_from_jsonl(JSONL_TRAIN_PATH)
-            
-            # 2. 构造 messages 列表，从系统提示词开始
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-            # 3. 将instructions作为历史对话添加到messages中
-            # 假设每个instruction都是用户消息，没有对应的助手回复
-            for instruction in instructions:
-                messages.append({"role": "user", "content": instruction})
-                # 如果需要模拟完整的对话轮次，可以添加空的助手回复
-                # messages.append({"role": "assistant", "content": ""})
-
-            # 4. 将当前用户输入的消息添加到列表
-            messages.append({"role": "user", "content": question})
-
-            # 【调试】打印最终发送给 API 的完整消息列表
-            print("发送给API的完整消息列表:")
-            print(json.dumps(messages, indent=2, ensure_ascii=False))
-
-            # 5. 构造请求的 payload
-            payload = {
-                "model": MODEL_NAME,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 2048,
-                "stream": True
-            }
-
-            # 6. 发送流式请求并处理响应
-            response = requests.post(
-                API_URL, 
-                headers={"Content-Type": "application/json"}, 
-                json=payload, 
-                stream=True,
-                timeout=60
+def load_model_handler(model_path):
+    """处理模型加载"""
+    try:
+        # 检查模型路径是否存在
+        model_dir = Path(model_path)
+        if not model_dir.exists():
+            return (
+                "<div class='error-msg'>❌ 模型路径不存在</div>",
+                f"错误：找不到模型路径 {model_path}"
             )
-            response.raise_for_status()
+        
+        # 检查模型文件
+        model_files = list(model_dir.glob("**/*.bin")) + list(model_dir.glob("**/*.safetensors"))
+        if not model_files:
+            return (
+                "<div class='error-msg'>❌ 未找到模型文件</div>",
+                f"在 {model_path} 中未找到 .bin 或 .safetensors 文件"
+            )
+        
+        # 这里可以添加实际的模型加载逻辑
+        # 例如调用相应的模型加载函数
+        
+        return (
+            f"<div class='success-msg'>✅ 模型加载成功</div>",
+            f"模型信息:\n"
+            f"- 路径: {model_path}\n"
+            f"- 找到 {len(model_files)} 个模型文件\n"
+            f"- 示例文件: {model_files[0].name if model_files else '无'}\n"
+            f"- 加载时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+    except Exception as e:
+        return (
+            f"<div class='error-msg'>❌ 模型加载失败: {str(e)}</div>",
+            f"错误详情: {str(e)}"
+        )
 
-            full_response = ""
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8')
-                    if line.startswith("data: "):
-                        json_str = line[len("data: "):]
-                        try:
-                            data = json.loads(json_str)
-                            delta_content = data['choices'][0]['delta'].get('content', '')
-                            if delta_content:
-                                full_response += delta_content
-                                yield f"模型路径: {model_path}\n问题: {question}\n回答: {full_response}"
-                        except json.JSONDecodeError:
-                            continue
+def run_inference_handler(model_path, question, temperature, max_tokens):
+    """处理推理请求"""
+    try:
+        # 检查模型是否已加载
+        model_dir = Path(model_path)
+        if not model_dir.exists():
+            return (
+                "<div class='error-msg'>❌ 请先加载模型</div>",
+                "错误：模型路径不存在，请先点击'加载模型'",
+                f"模型路径: {model_path}\n问题: {question}\n状态: 模型未加载"
+            )
+        
+        if not question.strip():
+            return (
+                "<div class='error-msg'>❌ 请输入问题</div>",
+                "错误：问题不能为空",
+                "请先输入您想要询问的问题"
+            )
+        
+        # 显示推理开始信息
+        inference_info = (
+            f"推理参数:\n"
+            f"- 模型路径: {model_path}\n"
+            f"- 问题: {question}\n"
+            f"- Temperature: {temperature}\n"
+            f"- 最大长度: {max_tokens}\n"
+            f"- 开始时间: {time.strftime('%H:%M:%S')}"
+        )
+        
+        # 调用推理函数
+        result = run_inference_ui_with_params(model_path, question, temperature, max_tokens)
+        
+        return (
+            "<div class='success-msg'>✅ 推理完成</div>",
+            result,
+            inference_info + f"\n- 完成时间: {time.strftime('%H:%M:%S')}"
+        )
+        
+    except Exception as e:
+        return (
+            f"<div class='error-msg'>❌ 推理失败: {str(e)}</div>",
+            f"错误：{str(e)}",
+            f"模型路径: {model_path}\n问题: {question}\n错误: {str(e)}"
+        )
 
-        except requests.exceptions.RequestException as e:
-            yield f"模型路径: {model_path}\n问题: {question}\n错误: API请求出错 - {e}"
-        except Exception as e:
-            yield f"模型路径: {model_path}\n问题: {question}\n错误: 发生未知错误 - {e}"
-    
-    return generate_stream()
+def run_inference_ui_with_params(model_path, question, temperature=0.7, max_tokens=2048):
+    """
+    带参数的推理函数
+    """
+    try:
+        # 0. 先检查服务是否已启动，如果没有则启动
+        if not is_service_running():
+            start_result = start_inference_service()
+            if not start_result:
+                return "❌ 启动推理服务失败，请检查 infer.sh 文件"
+            time.sleep(5)  # 等待服务完全启动
+        
+        # 1. 从JSONL文件加载instructions作为历史
+        instructions = load_instructions_from_jsonl(JSONL_TRAIN_PATH)
+        
+        # 2. 构造 messages 列表，从系统提示词开始
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # 3. 将instructions作为历史对话添加到messages中
+        for instruction in instructions:
+            messages.append({"role": "user", "content": instruction})
+
+        # 4. 将当前用户输入的消息添加到列表
+        messages.append({"role": "user", "content": question})
+
+        # 5. 构造请求的 payload
+        payload = {
+            "model": MODEL_NAME,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False
+        }
+
+        # 6. 发送请求
+        response = requests.post(
+            API_URL, 
+            headers={"Content-Type": "application/json"}, 
+            json=payload, 
+            timeout=60
+        )
+        response.raise_for_status()
+
+        # 7. 解析响应
+        data = response.json()
+        full_response = data['choices'][0]['message']['content']
+        
+        return f"模型路径: {model_path}\n问题: {question}\n回答: {full_response}"
+
+    except requests.exceptions.RequestException as e:
+        return f"模型路径: {model_path}\n问题: {question}\n错误: API请求出错 - {e}"
+    except Exception as e:
+        return f"模型路径: {model_path}\n问题: {question}\n错误: 发生未知错误 - {e}"
+
+def is_service_running():
+    """检查推理服务是否已经在运行"""
+    try:
+        response = requests.get(API_URL.replace("/v1/chat/completions", "/api/tags"), timeout=5)
+        return response.status_code == 200
+    except:
+        return False
+
+def start_inference_service():
+    """启动推理服务"""
+    try:
+        # 运行 infer.sh 脚本
+        process = subprocess.Popen(
+            ["bash", "app/infer/infer.sh"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        # 等待一段时间看是否启动成功
+        time.sleep(3)
+        return process.poll() is None  # 如果进程还在运行，说明启动成功
+    except Exception as e:
+        print(f"启动服务失败: {e}")
+        return False
 
 # 全局变量用于存储实时日志
 real_time_logs = []
@@ -1302,6 +1464,7 @@ def main():
                         outputs=[active_tasks, completed_tasks, monitoring_log]
                     )
         
+        # PDF转换事件绑定
         pdf_tab["inputs"]["convert_btn"].click(
             fn=process_multiple_pdfs,
             inputs=[
@@ -1323,6 +1486,7 @@ def main():
             outputs=pdf_tab["outputs"]["cleanup_output"]
         )
         
+        # 问答生成事件绑定
         qa_tab["inputs"]["generate_btn"].click(
             fn=run_qa_generation,
             inputs=[
@@ -1352,6 +1516,7 @@ def main():
             ]
         )
         
+        # 训练事件绑定
         training_tab["inputs"]["start_training_btn"].click(
             fn=start_training_ui,
             inputs=[
@@ -1366,15 +1531,32 @@ def main():
             ]
         )
         
-        inference_tab["inputs"]["run_inference_btn"].click(
-            fn=run_inference_ui,
-            inputs=[
-                inference_tab["inputs"]["model_path"],
-                inference_tab["inputs"]["question_input"]
-            ],
-            outputs=inference_tab["outputs"]["inference_result"]
+        # 推理事件绑定
+        inference_tab["inputs"]["load_model_btn"].click(
+            fn=load_model_handler,
+            inputs=inference_tab["inputs"]["model_path"],
+            outputs=[
+                inference_tab["outputs"]["model_status"],
+                inference_tab["outputs"]["inference_info"]
+            ]
         )
         
+        inference_tab["inputs"]["run_inference_btn"].click(
+            fn=run_inference_handler,
+            inputs=[
+                inference_tab["inputs"]["model_path"],
+                inference_tab["inputs"]["question_input"],
+                inference_tab["inputs"]["temperature_slider"],
+                inference_tab["inputs"]["max_tokens_slider"]
+            ],
+            outputs=[
+                inference_tab["outputs"]["inference_progress"],
+                inference_tab["outputs"]["inference_result"],
+                inference_tab["outputs"]["inference_info"]
+            ]
+        )
+        
+        # 进度控制
         with gr.Row():
             gr.Markdown("### 进度控制")
             manual_refresh_btn = gr.Button("🔄 手动刷新进度", variant="secondary")

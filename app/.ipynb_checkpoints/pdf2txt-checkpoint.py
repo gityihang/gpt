@@ -20,7 +20,7 @@ if not api_key:
 client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 class AdvancedPDFToTXTConverter:
-    def __init__(self, pdf_folder="pdf", txt_folder="txt", max_workers=3):
+    def __init__(self, pdf_folder="app/pdf", txt_folder="app/txt", max_workers=3):
         self.pdf_folder = Path(pdf_folder)
         self.txt_folder = Path(txt_folder)
         self.pdf_folder.mkdir(exist_ok=True)
