@@ -93,7 +93,7 @@ def create_pdf_converter_tab():
     
     with gr.Blocks() as tab:
         gr.Markdown("""
-        # 📄 GPT低秩训练&推理
+        # 📄 PDF转换页面TXT
         
         使用AI技术智能处理PDF文档，提取论文标题、清理格式并转换数学公式。
         """)
@@ -1390,10 +1390,10 @@ def main():
             secondary_hue="purple"
         ),
         css=custom_css,
-        title="高级PDF处理工具 - 全流程AI解决方案"
+        title="GPT低秩训练&推理 - 全流程AI解决方案"
     ) as demo:
         
-        gr.Markdown("# 📄 高级PDF处理工具")
+        gr.Markdown("# 📄 GPT低秩训练&推理")
         gr.Markdown("一站式PDF转TXT、问答生成、模型训练与推理解决方案")
         
         with gr.Tabs() as tabs:
